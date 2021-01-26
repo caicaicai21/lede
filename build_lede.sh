@@ -15,19 +15,32 @@ check_git(){
 	fi
 }
 
+mtk_devices=(
+mir3g
+newifi3
+hc5761
+)
+
 MTK_DRIVER=0
 ONLY_CONFIG=0
-MODEL="x86_64"
+MODEL=x86_64
 THREADS=$(nproc)
 SKIP=0
+NATFLOW=0
+BATMAN=0
 
-while getopts :osMt:m: OPTION; do
+while getopts :osnbMt:m: OPTION; do
 	case $OPTION in
 		o) ONLY_CONFIG=1
 		;;
 		M) MTK_DRIVER=1
 		;;
 		m) MODEL=$OPTARG
+		;;
+		n) #NATFLOW=1
+			echo "natflow disable"
+		;;
+		b) BATMAN=1
 		;;
 		t)
 			if [ $OPTARG -gt 0 ];then
@@ -40,6 +53,8 @@ while getopts :osMt:m: OPTION; do
 		printf "[Usage]
 	-o: only create config file
 	-M: use mtk wireless driver
+	-b: include B.A.T.M.A.N-adv
+	-n: use natflow (only mtk device)
 	-t <NUMBER>: thread count, default cpu count
 	-m <MODEL_NAME>: x86_64(default) rpi3 rpi4 mir3g newifi3 hc5761\n" >&2
 		exit 1 ;;
@@ -63,6 +78,21 @@ if [ $ONLY_CONFIG -eq 1 ];then
 else
 	printf "no\n"
 fi
+printf "Include B.A.T.M.A.N-adv: "
+if [ $BATMAN -eq 1 ];then
+	printf "yes\n"
+else
+	printf "no\n"
+fi
+if [[ ! "${mtk_devices[@]}" =~ "${MODEL}" ]];then
+	NATFLOW=0
+fi
+printf "Use Natflow: "
+if [ $NATFLOW -eq 1 ];then
+	printf "yes\n"
+else
+	printf "no\n"
+fi
 echo "Model name: $MODEL"
 echo "Thread count: $THREADS"
 
@@ -78,6 +108,18 @@ if [ ! -d "custom-packages" ];then
 	mkdir custom-packages
 fi
 cd custom-packages
+
+if [ -d "natflow" ];then
+	rm -rf ./natflow/
+fi
+if [ -f "../../target/linux/ramips/patches-5.4/990-mtk-driver-hwnat-compat-with-natflow.patch" ];then
+	rm -rf ../../target/linux/ramips/patches-5.4/990-mtk-driver-hwnat-compat-with-natflow.patch
+fi
+if [ $NATFLOW -eq 1 ];then
+	git clone https://github.com/caicaicai21/natflow.git
+	check_git
+	mv ./natflow/990-mtk-driver-hwnat-compat-with-natflow.patch ../../target/linux/ramips/patches-5.4/990-mtk-driver-hwnat-compat-with-natflow.patch	
+fi
 
 #if [ ! -d "luci-theme-atmaterial" ];then
 #    git clone https://github.com/openwrt-develop/luci-theme-atmaterial.git
@@ -272,6 +314,9 @@ CONFIG_PACKAGE_luci-theme-netgear=y
 CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_PACKAGE_ipv6helper=y
 #
+# CONFIG_PACKAGE_natflow-boot is not set
+CONFIG_PACKAGE_luci-app-flowoffload=y
+#
 CONFIG_PACKAGE_luci-app-vlmcsd=y
 CONFIG_PACKAGE_luci-app-ssr-plus=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks=y
@@ -280,7 +325,8 @@ CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Kcptun=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Xray=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Redsocks2=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_DNS2SOCKS=y
-CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan=y
+# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan is not set
+CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan-go=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Simple_obfs=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_V2ray_plugin=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_ShadowsocksR_Server=y
@@ -320,6 +366,9 @@ CONFIG_PACKAGE_luci-theme-netgear=y
 CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_PACKAGE_ipv6helper=y
 #
+# CONFIG_PACKAGE_natflow-boot is not set
+CONFIG_PACKAGE_luci-app-flowoffload=y
+#
 CONFIG_PACKAGE_luci-app-vlmcsd=y
 CONFIG_PACKAGE_luci-app-ssr-plus=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks=y
@@ -328,7 +377,8 @@ CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Kcptun=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Xray=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Redsocks2=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_DNS2SOCKS=y
-CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan=y
+# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan is not set
+CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Trojan-go=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Simple_obfs=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_V2ray_plugin=y
 CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_ShadowsocksR_Server=y
@@ -419,9 +469,23 @@ EOF
 fi
 fi
 
+if [ $BATMAN -eq 1 ];then
 cat >> .config <<EOF
 CONFIG_PACKAGE_kmod-batman-adv=y
 EOF
+fi
+
+if [ $NATFLOW -eq 1 ];then
+cat >> .config <<EOF
+CONFIG_PACKAGE_natflow-boot=y
+# CONFIG_PACKAGE_luci-app-flowoffload is not set
+EOF
+else
+cat >> .config <<EOF
+# CONFIG_PACKAGE_natflow-boot is not set
+CONFIG_PACKAGE_luci-app-flowoffload=y
+EOF
+fi
 
 sed -i 's/^[ \t]*//g' ./.config
 make defconfig
